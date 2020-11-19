@@ -1,4 +1,4 @@
-module github.com/replicatedhq/krew-plugin-template
+module github.com/youngnick/conditions
 
 go 1.12
 
