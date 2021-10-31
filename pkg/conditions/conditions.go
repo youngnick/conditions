@@ -4,32 +4,25 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"time"
 
-	"github.com/davecgh/go-spew/spew"
 	v1 "github.com/youngnick/conditions/apis/youngnick.dev/v1"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/cli-runtime/pkg/genericclioptions"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 )
 
-func GetConditions(configFlags *genericclioptions.ConfigFlags, objecttype string) ([]*v1.DuckConditions, error) {
+func GetConditions(f cmdutil.Factory, objecttype *schema.GroupVersionResource) ([]ConditionsObj, error) {
 
-	var returnvals []*v1.DuckConditions
-
-	f := cmdutil.NewFactory(configFlags)
-
-	// condConvert, err := NewUnstructuredConverter()
-	// if err != nil {
-	// 	return nil, err
-	// }
+	var returnvals []ConditionsObj
 
 	dynamicClient, err := f.DynamicClient()
 	if err != nil {
 		return nil, err
 	}
 
-	client := dynamicClient.Resource(corev1.Resource(objecttype).WithVersion("v1"))
+	client := dynamicClient.Resource(*objecttype)
 
 	result, err := client.List(context.Background(), metav1.ListOptions{})
 	if err != nil {
@@ -38,10 +31,13 @@ func GetConditions(configFlags *genericclioptions.ConfigFlags, objecttype string
 
 	for _, item := range result.Items {
 
-		// obj, err := condConvert.FromUnstructured(item)
-		// if err != nil {
-		// 	return nil, err
-		// }
+		var condObj ConditionsObj
+
+		condObj.Name = item.GetName()
+		condObj.Namespace = item.GetNamespace()
+		condObj.Group = item.GetObjectKind().GroupVersionKind().Group
+		condObj.Resource = objecttype.Resource
+		condObj.APIVersion = item.GetAPIVersion()
 
 		fmt.Printf("Object: %s/%s %s\n", item.GetNamespace(), item.GetName(), item.GetKind())
 
@@ -50,8 +46,6 @@ func GetConditions(configFlags *genericclioptions.ConfigFlags, objecttype string
 			return nil, err
 		}
 
-		// fmt.Println(string(raw))
-
 		cond := &v1.DuckConditions{}
 
 		err = json.Unmarshal(raw, cond)
@@ -59,66 +53,41 @@ func GetConditions(configFlags *genericclioptions.ConfigFlags, objecttype string
 			return nil, err
 		}
 
-		spew.Dump(cond)
+		condObj.Conditions = cond.Status.Conditions
 
-		returnvals = append(returnvals, cond)
+		// spew.Dump(condObj)
+		returnvals = append(returnvals, condObj)
 
 	}
-	// config, err := configFlags.ToRESTConfig()
-	// if err != nil {
-	// 	return nil, errors.Wrap(err, "failed to read kubeconfig")
-	// }
-
-	// clientset, err := kubernetes.NewForConfig(config)
-	// if err != nil {
-	// 	return nil, errors.Wrap(err, "failed to create clientset")
-	// }
-
-	// _, resourcelists, err := clientset.DiscoveryClient.ServerGroupsAndResources()
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// // for i, group := range groups {
-	// // 	fmt.Printf("Group #%d\n", i)
-	// // 	spew.Dump(group)
-	// // }
-
-	// for _, resourcelist := range resourcelists {
-
-	// 	for _, resource := range resourcelist.APIResources {
-	// 		if resource.Name == objecttype {
-	// 			fmt.Printf("Resources: %s\n", resourcelist.GroupVersion)
-	// 			spew.Dump(resource)
-	// 		}
-	// 	}
-	// }
-	// restClient := clientset.RESTClient()
-	// config.ContentConfig.GroupVersion = &schema.GroupVersion{
-	// 	Group:   "",
-	// 	Version: "v1",
-	// }
-	// // config.NegotiatedSerializer = runtime.NewSimpleNegotiatedSerializer(info runtime.SerializerInfo)
-	// spew.Dump(config)
-
-	// // spew.Dump(restClient)
-	// result := restClient.Get().Resource(objecttype).Do(context.Background())
-	// // spew.Dump(result)
-
-	// var conditionsslice []v1.DuckConditions
-
-	// condition := &v1.DuckConditions{}
-
-	// err = result.Into(condition)
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// spew.Dump(condition)
-	// // namespaces, err :=
-	// CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
-	// if err != nil {
-	// 	return nil, errors.Wrap(err, "failed to list namespaces")
-	// }
-
 	return returnvals, nil
+}
+
+type ConditionsObj struct {
+	Name       string
+	Namespace  string
+	Resource   string
+	APIVersion string
+	Group      string
+	Conditions []metav1.Condition
+}
+
+func (co *ConditionsObj) Print(out io.Writer) {
+
+	var outputName string
+
+	outputName = co.Resource + "." + co.Group + "/" + co.Name
+
+	fmt.Fprintf(out, "\n-n %s %s\n\nConditions:\n", co.Namespace, outputName)
+
+	fmt.Fprintf(out, "  Type\tStatus\tLastTransitionTime\tReason\tMessage\n")
+	fmt.Fprintf(out, "  ----\t------\t------------------\t------\t-------\n")
+
+	for _, c := range co.Conditions {
+		fmt.Fprintf(out, "  %v \t%v \t%s \t%v \t%v\n",
+			c.Type,
+			c.Status,
+			c.LastTransitionTime.Time.Format(time.RFC1123Z),
+			c.Reason,
+			c.Message)
+	}
 }

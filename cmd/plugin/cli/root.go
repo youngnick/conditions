@@ -4,14 +4,16 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/youngnick/conditions/pkg/conditions"
 	"github.com/youngnick/conditions/pkg/logger"
+	"github.com/youngnick/conditions/pkg/resourceparser"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
-	"k8s.io/cli-runtime/pkg/printers"
+	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 )
 
 var (
@@ -32,16 +34,24 @@ func RootCmd() *cobra.Command {
 			log := logger.NewLogger()
 			log.Info("starting up")
 
-			conditions, err := conditions.GetConditions(KubernetesConfigFlags, args[0])
+			f := cmdutil.NewFactory(KubernetesConfigFlags)
+
+			requestedGVR, err := resourceparser.Translate(f, args[0])
+			if err != nil {
+				return err
+			}
+
+			condObjs, err := conditions.GetConditions(f, requestedGVR)
 			if err != nil {
 				return errors.Cause(err)
 			}
 
-			printer := printers.NewTablePrinter(printers.PrintOptions{})
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', tabwriter.TabIndent)
+			for _, condObj := range condObjs {
 
-			for _, condition := range conditions {
-				printer.PrintObj(condition, os.Stdout)
+				condObj.Print(w)
 			}
+			w.Flush()
 
 			return nil
 		},
